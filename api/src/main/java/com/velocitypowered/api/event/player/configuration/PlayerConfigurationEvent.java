@@ -17,6 +17,9 @@ import org.jetbrains.annotations.NotNull;
  *
  * <p>Velocity will wait for this event before continuing/ending the configuration state.</p>
  *
+ * <p>This event is not executed for server switches that skip the client's configuration phase
+ * (see the {@code seamless-server-switches} option in the proxy configuration).</p>
+ *
  * @param player The player who can be configured.
  * @param server The server that is currently configuring the player.
  * @since 3.3.0

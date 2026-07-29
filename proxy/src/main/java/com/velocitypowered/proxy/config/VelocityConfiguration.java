@@ -453,6 +453,10 @@ public class VelocityConfiguration implements ProxyConfig {
     return advanced.isEnableReusePort();
   }
 
+  public boolean isSeamlessServerSwitches() {
+    return advanced.isSeamlessServerSwitches();
+  }
+
   public PacketLimiterConfig getPacketLimiterConfig() {
     return packetLimiterConfig;
   }
@@ -780,6 +784,8 @@ public class VelocityConfiguration implements ProxyConfig {
     @Expose
     private boolean enableReusePort = false;
     @Expose
+    private boolean seamlessServerSwitches = false;
+    @Expose
     private int commandRateLimit = 50;
     @Expose
     private boolean forwardCommandsIfRateLimited = true;
@@ -815,6 +821,7 @@ public class VelocityConfiguration implements ProxyConfig {
         this.logPlayerConnections = config.getOrElse("log-player-connections", true);
         this.acceptTransfers = config.getOrElse("accepts-transfers", false);
         this.enableReusePort = config.getOrElse("enable-reuse-port", false);
+        this.seamlessServerSwitches = config.getOrElse("seamless-server-switches", false);
         this.commandRateLimit = config.getIntOrElse("command-rate-limit", 25);
         this.forwardCommandsIfRateLimited = config.getOrElse("forward-commands-if-rate-limited", true);
         this.kickAfterRateLimitedCommands = config.getIntOrElse("kick-after-rate-limited-commands", 0);
@@ -885,6 +892,10 @@ public class VelocityConfiguration implements ProxyConfig {
 
     public boolean isEnableReusePort() {
       return enableReusePort;
+    }
+
+    public boolean isSeamlessServerSwitches() {
+      return seamlessServerSwitches;
     }
 
     public int getCommandRateLimit() {

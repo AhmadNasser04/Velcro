@@ -19,6 +19,9 @@ import org.jetbrains.annotations.NotNull;
  * the {@linkplain Player#getProtocolState()} method is guaranteed
  * to return {@link ProtocolState#CONFIGURATION}.</p>
  *
+ * <p>This event is not executed for server switches that skip the client's configuration phase
+ * (see the {@code seamless-server-switches} option in the proxy configuration).</p>
+ *
  * @param player The player who has entered the configuration state.
  * @param server The server that will now (re-)configure the player.
  * @since 3.3.0

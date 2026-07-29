@@ -41,10 +41,12 @@ import com.velocitypowered.proxy.connection.backend.VelocityServerConnection;
 import com.velocitypowered.proxy.connection.forge.legacy.LegacyForgeConstants;
 import com.velocitypowered.proxy.connection.player.resourcepack.ResourcePackResponseBundle;
 import com.velocitypowered.proxy.protocol.MinecraftPacket;
+import com.velocitypowered.proxy.protocol.ProtocolUtils;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.netty.MinecraftDecoder;
 import com.velocitypowered.proxy.protocol.packet.BossBarPacket;
 import com.velocitypowered.proxy.protocol.packet.ClientSettingsPacket;
+import com.velocitypowered.proxy.protocol.packet.GameEventPacket;
 import com.velocitypowered.proxy.protocol.packet.JoinGamePacket;
 import com.velocitypowered.proxy.protocol.packet.KeepAlivePacket;
 import com.velocitypowered.proxy.protocol.packet.PluginMessagePacket;
@@ -72,7 +74,8 @@ import com.velocitypowered.proxy.protocol.packet.chat.session.SessionCommandHand
 import com.velocitypowered.proxy.protocol.packet.chat.session.SessionPlayerChatPacket;
 import com.velocitypowered.proxy.protocol.packet.chat.session.SessionPlayerCommandPacket;
 import com.velocitypowered.proxy.protocol.packet.config.FinishedUpdatePacket;
-import com.velocitypowered.proxy.protocol.packet.title.GenericTitlePacket;
+import com.velocitypowered.proxy.protocol.tracking.ClientStateTracker;
+import com.velocitypowered.proxy.protocol.tracking.TrackedPackets;
 import com.velocitypowered.proxy.protocol.util.PluginMessageUtil;
 import com.velocitypowered.proxy.util.CharacterUtil;
 import com.velocitypowered.proxy.util.except.QuietRuntimeException;
@@ -80,6 +83,8 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
 import io.netty.util.ReferenceCountUtil;
+import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
+import it.unimi.dsi.fastutil.ints.IntSet;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -88,6 +93,7 @@ import java.util.Queue;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import net.kyori.adventure.key.Key;
@@ -116,9 +122,13 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
 
   private static final Logger logger = LogManager.getLogger(ClientPlaySessionHandler.class);
 
+  private static final int HUD_SWEEP_DELAY_SECONDS = 3;
+
   private final ConnectedPlayer player;
+  private final @Nullable TrackedPackets trackedPackets;
   private boolean spawned = false;
   private final List<UUID> serverBossBars = new ArrayList<>();
+  private int hudSweepGeneration;
   private final Queue<PluginMessagePacket> loginPluginMessages = new ConcurrentLinkedQueue<>();
   private final AtomicLong loginPluginMessagesBytes = new AtomicLong();
   private final AtomicInteger loginPluginMessagesCount = new AtomicInteger();
@@ -142,6 +152,7 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
   public ClientPlaySessionHandler(VelocityServer server, ConnectedPlayer player) {
     this.player = player;
     this.server = server;
+    this.trackedPackets = ClientStateTracker.tableFor(player.getProtocolVersion());
 
     if (this.player.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_19_3)) {
       this.chatHandler = new SessionChatHandler(this.player, this.server);
@@ -180,6 +191,10 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
   @Override
   public void activated() {
     configSwitchFuture = new CompletableFuture<>();
+    if (server.getConfiguration().isSeamlessServerSwitches()
+        && ClientStateTracker.isSupported(player.getProtocolVersion())) {
+      player.installEntityTrackerHandlerIfNeeded();
+    }
     Collection<ChannelIdentifier> channels =
         server.getChannelRegistrar().getChannelsForProtocol(player.getProtocolVersion());
     if (!channels.isEmpty()) {
@@ -549,6 +564,14 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
       return;
     }
 
+    if (server.getConfiguration().isSeamlessServerSwitches() && isChatSessionUpdate(buf)) {
+      // A signed chat chain cannot survive a packetless switch: only a JoinGame makes the
+      // client restart its chain and announce a fresh session, so a switched-to backend would
+      // reject everything signed against the old one and the client's chat breaks. Withhold
+      // the session from every backend instead; outgoing chat is forwarded unsigned.
+      return;
+    }
+
     MinecraftConnection smc = serverConnection.getConnection();
     final boolean stateAllowsForward = smc != null
         && !smc.isClosed()
@@ -557,6 +580,10 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
     if (stateAllowsForward) {
       smc.write(buf.retain());
     }
+  }
+
+  private boolean isChatSessionUpdate(ByteBuf buf) {
+    return trackedPackets != null && ProtocolUtils.readVarInt(buf.duplicate()) == trackedPackets.chatSessionUpdateId();
   }
 
   @Override
@@ -623,9 +650,13 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
       player.getTabList().clearAllSilent();
       if (player.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_20_2)) {
         player.getBossBarManager().dropPackets();
-      } else {
-        serverBossBars.clear();
       }
+      serverBossBars.clear();
+      player.getKnownObjectives().clear();
+      player.getKnownTeams().clear();
+      player.getStaleObjectives().clear();
+      player.getStaleTeams().clear();
+      hudSweepGeneration++;
     }
 
     player.switchToConfigState();
@@ -643,10 +674,16 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
   public void handleBackendJoinGame(JoinGamePacket joinGame, VelocityServerConnection destination) {
     final MinecraftConnection serverMc = destination.ensureConnected();
 
+    if (server.getConfiguration().isSeamlessServerSwitches()) {
+      // Secure chat can't survive a packetless switch
+      joinGame.setEnforcesSecureChat(false);
+    }
+
     if (!spawned) {
       // The player wasn't spawned in yet, so we don't need to do anything special. Just send
       // JoinGame.
       spawned = true;
+      resetClientWorldState(joinGame);
       player.getConnection().delayedWrite(joinGame);
       // Required for Legacy Forge
       player.getPhase().onFirstJoin(player);
@@ -654,17 +691,31 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
       // Clear tab list to avoid duplicate entries
       player.getTabList().clearAll();
 
+      if (destination.isSeamlessJoin()) {
+        // mark as stale to be swept away later instead of reseting/removing abruptly
+        beginHudReconciliation();
+      }
+
       // The player is switching from a server already, so we need to tell the client to change
       // entity IDs and send new dimension information.
-      if (player.getConnection().getType() == ConnectionTypes.LEGACY_FORGE) {
+      if (destination.isSeamlessJoin() && canDoRespawnOnlySwitch(player, joinGame)) {
+        this.doSeamlessServerSwitch(joinGame, destination);
+      } else if (player.getConnection().getType() == ConnectionTypes.LEGACY_FORGE) {
+        resetClientWorldState(joinGame);
         this.doSafeClientServerSwitch(joinGame);
       } else {
+        resetClientWorldState(joinGame);
         this.doFastClientServerSwitch(joinGame);
       }
     }
 
-    destination.setEntityId(joinGame.getEntityId()); // used for sound api
-    if (player.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_20_2)) {
+    if (joinGame.getDimensionInfo() != null) {
+      player.setCurrentDimensionName(joinGame.getDimensionInfo().getLevelName());
+    }
+
+    destination.setEntityId(player.getClientEntityId()); // used for sound api
+    if (player.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_20_2)
+        && !destination.isSeamlessJoin()) {
       player.getBossBarManager().sendBossBars();
     } else {
       // Remove previous boss bars. These don't get cleared when sending JoinGame (up until 1.20.2),
@@ -698,13 +749,6 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
     loginPluginMessagesBytes.set(0);
     loginPluginMessagesCount.set(0);
 
-    // Clear any title from the previous server.
-    if (player.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_8)) {
-      player.getConnection().delayedWrite(
-          GenericTitlePacket.constructTitlePacket(GenericTitlePacket.ActionType.RESET,
-              player.getProtocolVersion()));
-    }
-
     // Flush everything
     player.getConnection().flush();
     serverMc.flush();
@@ -730,6 +774,102 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
     }
     player.getConnection().delayedWrite(joinGame);
     player.getConnection().delayedWrite(respawn);
+  }
+
+  private void beginHudReconciliation() {
+    player.getStaleObjectives().addAll(player.getKnownObjectives());
+    player.getStaleTeams().addAll(player.getKnownTeams());
+    final int generation = ++hudSweepGeneration;
+    player.getConnection().eventLoop().schedule(() -> sweepStaleHud(generation),
+        HUD_SWEEP_DELAY_SECONDS, TimeUnit.SECONDS);
+  }
+
+  private void sweepStaleHud(final int generation) {
+    if (generation != hudSweepGeneration || !player.getConnection().getChannel().isActive()) {
+      return;
+    }
+    final List<String> objectives = new ArrayList<>(player.getStaleObjectives());
+    final List<String> teams = new ArrayList<>(player.getStaleTeams());
+    player.getStaleObjectives().clear();
+    player.getStaleTeams().clear();
+    if (objectives.isEmpty() && teams.isEmpty()) {
+      return;
+    }
+    for (final String objective : objectives) {
+      player.getKnownObjectives().remove(objective);
+      player.getConnection().delayedWrite(ClientStateTracker.createRemoveObjectivePacket(
+          player.getProtocolVersion(), objective, player.getConnection().getChannel().alloc()));
+    }
+    for (final String team : teams) {
+      player.getKnownTeams().remove(team);
+      player.getConnection().delayedWrite(ClientStateTracker.createRemoveTeamPacket(
+          player.getProtocolVersion(), team, player.getConnection().getChannel().alloc()));
+    }
+    player.getConnection().flush();
+  }
+
+  private void resetClientWorldState(JoinGamePacket joinGame) {
+    player.setClientEntityId(joinGame.getEntityId());
+    player.getKnownEntityIds().clear();
+    player.getWorldTracker().reset();
+    player.getWorldTracker().onViewDistance(joinGame.getViewDistance());
+    player.resetTrackedClientState();
+    player.setClientGamemode(joinGame.getGamemode());
+  }
+
+  /**
+   * A packetless switch needs a tracked protocol version, the same dimension name, and the
+   * entity id the client already has (backends with the companion plugin honor the cookie).
+   */
+  public static boolean canDoRespawnOnlySwitch(ConnectedPlayer player, JoinGamePacket joinGame) {
+    if (!ClientStateTracker.isSupported(player.getProtocolVersion())) {
+      return false;
+    }
+    if (joinGame.getEntityId() != player.getClientEntityId()) {
+      logger.debug("No packetless switch for {}: backend assigned entity id {} but the client "
+          + "has {} (companion plugin missing on the backend?)", player.getUsername(),
+          joinGame.getEntityId(), player.getClientEntityId());
+      return false;
+    }
+    final String currentDimension = player.getCurrentDimensionName();
+    return currentDimension != null && joinGame.getDimensionInfo() != null
+        && currentDimension.equals(joinGame.getDimensionInfo().getLevelName());
+  }
+
+  private void doSeamlessServerSwitch(JoinGamePacket joinGame, VelocityServerConnection destination) {
+    // The world is kept, so everything the previous server (or a plugin, on its behalf) showed
+    // the client must be removed explicitly.
+    final IntSet ghostEntities = new IntOpenHashSet(player.getKnownEntityIds());
+    player.getKnownEntityIds().clear();
+    if (!ghostEntities.isEmpty()) {
+      player.getConnection().delayedWrite(ClientStateTracker.createRemoveEntitiesPacket(
+          player.getProtocolVersion(), ghostEntities,
+          player.getConnection().getChannel().alloc()));
+    }
+
+    final int clientId = player.getClientEntityId();
+
+    logger.debug("Seamless packetless switch for {}: dimension {}, entity id {}, "
+        + "removing {} old entities", player.getUsername(),
+        player.getCurrentDimensionName(), clientId, ghostEntities.size());
+
+    final IntSet staleEffects = new IntOpenHashSet(player.getActiveSelfEffects());
+    for (final var it = staleEffects.iterator(); it.hasNext(); ) {
+      player.getConnection().delayedWrite(ClientStateTracker.createRemoveEffectPacket(
+          player.getProtocolVersion(), clientId, it.nextInt(),
+          player.getConnection().getChannel().alloc()));
+    }
+    if (player.getClientGamemode() != joinGame.getGamemode()) {
+      player.getConnection().delayedWrite(
+          new GameEventPacket(GameEventPacket.CHANGE_GAME_MODE, joinGame.getGamemode()));
+    }
+
+    destination.setSuppressLevelLoadEvent(true);
+
+    player.armPositionSyncTransparency();
+
+    player.resetTrackedClientState();
+    player.setClientGamemode(joinGame.getGamemode());
   }
 
   private void doSafeClientServerSwitch(JoinGamePacket joinGame) {

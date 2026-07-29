@@ -20,6 +20,9 @@ import org.jetbrains.annotations.NotNull;
  * Velocity will only wait for a maximum of 5 seconds. If you need to hold a player in configuration
  * state, use the {@link PlayerConfigurationEvent}.</p>
  *
+ * <p>This event is not executed for server switches that skip the client's configuration phase
+ * (see the {@code seamless-server-switches} option in the proxy configuration).</p>
+ *
  * @param player The player who is about to finish the configuration phase.
  * @param server The server that has (re-)configured the player.
  * @since 3.3.0

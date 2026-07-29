@@ -33,6 +33,10 @@ public class KnownPacksPacket implements MinecraftPacket {
 
     private List<KnownPack> packs;
 
+    public List<KnownPack> getPacks() {
+        return packs;
+    }
+
     @Override
     public void decode(ByteBuf buf, ProtocolUtils.Direction direction,
                        ProtocolVersion protocolVersion) {

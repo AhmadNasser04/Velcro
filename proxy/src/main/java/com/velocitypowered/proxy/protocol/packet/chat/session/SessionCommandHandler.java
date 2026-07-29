@@ -44,12 +44,21 @@ public class SessionCommandHandler extends RateLimitedCommandHandler<SessionPlay
     return SessionPlayerCommandPacket.class;
   }
 
+  /**
+   * With seamless switches, no backend ever receives the client's chat session (a signed chain
+   * cannot survive a packetless switch), so signed commands are re-sent unsigned and the usual
+   * signed-consistency constraints do not apply.
+   */
+  private boolean stripSigning(SessionPlayerCommandPacket packet) {
+    return this.server.getConfiguration().isSeamlessServerSwitches() && packet.isSigned();
+  }
+
   @Nullable
   private MinecraftPacket consumeCommand(SessionPlayerCommandPacket packet) {
     if (packet.lastSeenMessages == null) {
       return null;
     }
-    if (packet.isSigned()) {
+    if (packet.isSigned() && !stripSigning(packet)) {
       // Any signed message produced by the client *must* be passed through to the server in order to maintain a
       // consistent state for future messages.
       logger.fatal("A plugin tried to deny a command with signable component(s). "
@@ -72,6 +81,9 @@ public class SessionCommandHandler extends RateLimitedCommandHandler<SessionPlay
   @Nullable
   private MinecraftPacket forwardCommand(SessionPlayerCommandPacket packet, String newCommand) {
     if (newCommand.equals(packet.command)) {
+      if (stripSigning(packet)) {
+        return modifyCommand(packet, newCommand);
+      }
       return packet;
     }
     return modifyCommand(packet, newCommand);
@@ -79,7 +91,7 @@ public class SessionCommandHandler extends RateLimitedCommandHandler<SessionPlay
 
   @Nullable
   private MinecraftPacket modifyCommand(SessionPlayerCommandPacket packet, String newCommand) {
-    if (packet.isSigned()) {
+    if (packet.isSigned() && !stripSigning(packet)) {
       logger.fatal("A plugin tried to change a command with signed component(s). "
           + "This is not supported. "
           + "Disconnecting player " + player.getUsername() + ". Command packet: " + packet);

@@ -36,3 +36,5 @@ sequenceOf(
 val deprecatedConfigurateModule = ":deprecated-configurate3"
 include(deprecatedConfigurateModule)
 project(deprecatedConfigurateModule).projectDir = file("proxy/deprecated/configurate3")
+
+includeBuild("companion")

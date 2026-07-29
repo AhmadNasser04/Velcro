@@ -54,23 +54,28 @@ public class SessionChatHandler implements ChatHandler<SessionPlayerChatPacket> 
     EventManager eventManager = this.server.getEventManager();
     PlayerChatEvent toSend = new PlayerChatEvent(player, packet.getMessage());
     CompletableFuture<PlayerChatEvent> eventFuture = eventManager.fire(toSend);
+    // With seamless switches, no backend ever receives the client's chat session (a signed
+    // chain cannot survive a packetless switch), so anything signed is re-sent unsigned.
+    final boolean stripSigning =
+        this.server.getConfiguration().isSeamlessServerSwitches() && packet.isSigned();
     chatQueue.queuePacket(
         newLastSeenMessages -> eventFuture
             .thenApply(pme -> {
               PlayerChatEvent.ChatResult chatResult = pme.getResult();
               if (!chatResult.isAllowed()) {
-                if (packet.isSigned()) {
+                if (packet.isSigned() && !stripSigning) {
                   invalidCancel(logger, player);
                 }
                 return null;
               }
 
-              if (chatResult.getMessage().map(str -> !str.equals(packet.getMessage()))
-                  .orElse(false)) {
-                if (packet.isSigned()) {
-                  invalidChange(logger, player);
-                  return null;
-                }
+              final boolean modified = chatResult.getMessage()
+                  .map(str -> !str.equals(packet.getMessage())).orElse(false);
+              if (modified && packet.isSigned() && !stripSigning) {
+                invalidChange(logger, player);
+                return null;
+              }
+              if (modified || stripSigning) {
                 return this.player.getChatBuilderFactory().builder()
                     .message(chatResult.getMessage().orElse(packet.getMessage()))
                     .setTimestamp(packet.timestamp)

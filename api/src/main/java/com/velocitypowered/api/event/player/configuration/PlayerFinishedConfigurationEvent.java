@@ -18,6 +18,9 @@ import org.jetbrains.annotations.NotNull;
  * <p>From this moment on, the {@link Player#getProtocolState()} method
  * will return {@link ProtocolState#PLAY}.</p>
  *
+ * <p>This event is not executed for server switches that skip the client's configuration phase
+ * (see the {@code seamless-server-switches} option in the proxy configuration).</p>
+ *
  * @param player The player who has finished the configuration state.
  * @param server The server that has (re-)configured the player.
  * @since 3.3.0
