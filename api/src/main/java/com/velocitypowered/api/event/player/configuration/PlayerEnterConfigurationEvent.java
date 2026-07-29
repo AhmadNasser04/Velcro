@@ -18,6 +18,8 @@ import org.jetbrains.annotations.NotNull;
  * <p>Velocity will wait for this event before asking the client to enter configuration state.
  * However due to backend server being unable to keep the connection alive during state changes,
  * Velocity will only wait for a maximum of 5 seconds.</p>
+ * <p>This event is not executed for server switches that skip the client's configuration phase
+ * (see the {@code seamless-server-switches} option in the proxy configuration).</p>
  *
  * @param player The player who is about to enter configuration state.
  * @param server The server that wants to reconfigure the player.

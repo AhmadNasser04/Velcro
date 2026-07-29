@@ -158,16 +158,27 @@ public class LoginSessionHandler implements MinecraftSessionHandler {
       smc.setActiveSessionHandler(StateRegistry.PLAY, new TransitionSessionHandler(server, serverConn, resultFuture));
     } else {
       smc.write(new LoginAcknowledgedPacket());
-      smc.setActiveSessionHandler(StateRegistry.CONFIG, new ConfigSessionHandler(server, serverConn, resultFuture));
       ConnectedPlayer player = serverConn.getPlayer();
-      if (player.getClientSettingsPacket() != null) {
-        smc.write(player.getClientSettingsPacket());
-      }
       if (player.getConnection().getActiveSessionHandler() instanceof ClientPlaySessionHandler clientPlaySessionHandler) {
-        smc.setAutoReading(false);
-        clientPlaySessionHandler.doSwitch().thenRunAsync(() -> smc.setAutoReading(true), smc.eventLoop());
+        if (AbsorbingConfigSessionHandler.canSwitchSeamlessly(server, serverConn, player)) {
+          smc.setActiveSessionHandler(StateRegistry.CONFIG, new AbsorbingConfigSessionHandler(server, serverConn, resultFuture));
+          if (player.getClientSettingsPacket() != null) {
+            smc.write(player.getClientSettingsPacket());
+          }
+        } else {
+          smc.setActiveSessionHandler(StateRegistry.CONFIG, new ConfigSessionHandler(server, serverConn, resultFuture));
+          if (player.getClientSettingsPacket() != null) {
+            smc.write(player.getClientSettingsPacket());
+          }
+          smc.setAutoReading(false);
+          clientPlaySessionHandler.doSwitch().thenRunAsync(() -> smc.setAutoReading(true), smc.eventLoop());
+        }
       } else {
         // Initial login - the player is already in configuration state.
+        smc.setActiveSessionHandler(StateRegistry.CONFIG, new ConfigSessionHandler(server, serverConn, resultFuture));
+        if (player.getClientSettingsPacket() != null) {
+          smc.write(player.getClientSettingsPacket());
+        }
         server.getEventManager().fireAndForget(new PlayerEnteredConfigurationEvent(player, serverConn));
       }
     }

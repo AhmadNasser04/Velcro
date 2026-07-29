@@ -49,6 +49,7 @@ import com.velocitypowered.proxy.command.builtin.VelocityCommand;
 import com.velocitypowered.proxy.config.VelocityConfiguration;
 import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
 import com.velocitypowered.proxy.connection.player.resourcepack.VelocityResourcePackInfo;
+import com.velocitypowered.proxy.connection.util.SeamlessSwitchFingerprintCache;
 import com.velocitypowered.proxy.connection.util.ServerListPingHandler;
 import com.velocitypowered.proxy.console.VelocityConsole;
 import com.velocitypowered.proxy.crypto.EncryptionUtils;
@@ -175,6 +176,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   private final VelocityScheduler scheduler;
   private final VelocityChannelRegistrar channelRegistrar = new VelocityChannelRegistrar();
   private final ServerListPingHandler serverListPingHandler;
+  private final SeamlessSwitchFingerprintCache seamlessSwitchFingerprintCache = new SeamlessSwitchFingerprintCache();
 
   VelocityServer(final ProxyOptions options) {
     pluginManager = new VelocityPluginManager(this);
@@ -467,6 +469,10 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
 
   public ServerListPingHandler getServerListPingHandler() {
     return serverListPingHandler;
+  }
+
+  public SeamlessSwitchFingerprintCache getSeamlessSwitchFingerprintCache() {
+    return seamlessSwitchFingerprintCache;
   }
 
   public boolean isShutdown() {

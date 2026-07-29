@@ -55,6 +55,7 @@ import com.velocitypowered.proxy.protocol.packet.ClientSettingsPacket;
 import com.velocitypowered.proxy.protocol.packet.ClientboundCookieRequestPacket;
 import com.velocitypowered.proxy.protocol.packet.ClientboundStoreCookiePacket;
 import com.velocitypowered.proxy.protocol.packet.DisconnectPacket;
+import com.velocitypowered.proxy.protocol.packet.GameEventPacket;
 import com.velocitypowered.proxy.protocol.packet.KeepAlivePacket;
 import com.velocitypowered.proxy.protocol.packet.LegacyPlayerListItemPacket;
 import com.velocitypowered.proxy.protocol.packet.PluginMessagePacket;
@@ -62,6 +63,7 @@ import com.velocitypowered.proxy.protocol.packet.RemovePlayerInfoPacket;
 import com.velocitypowered.proxy.protocol.packet.RemoveResourcePackPacket;
 import com.velocitypowered.proxy.protocol.packet.ResourcePackRequestPacket;
 import com.velocitypowered.proxy.protocol.packet.ResourcePackResponsePacket;
+import com.velocitypowered.proxy.protocol.packet.RespawnPacket;
 import com.velocitypowered.proxy.protocol.packet.ServerDataPacket;
 import com.velocitypowered.proxy.protocol.packet.TabCompleteResponsePacket;
 import com.velocitypowered.proxy.protocol.packet.TransferPacket;
@@ -178,11 +180,54 @@ public class BackendPlaySessionHandler implements MinecraftSessionHandler {
   }
 
   @Override
+  public boolean handle(RespawnPacket packet) {
+    final ConnectedPlayer player = serverConn.getPlayer();
+    // Track the client's dimension so a later seamless switch can decide whether a same-dimension
+    // (screen-free) respawn is possible.
+    if (packet.getDimensionInfo() != null && packet.getDimensionInfo().getLevelName() != null) {
+      final String newDimension = packet.getDimensionInfo().getLevelName();
+      if (!newDimension.equals(player.getCurrentDimensionName())) {
+        // A respawn into a different dimension makes the client discard its entire world; only
+        // a same-dimension respawn keeps it.
+        player.getKnownEntityIds().clear();
+        player.getWorldTracker().reset();
+      }
+      player.setCurrentDimensionName(newDimension);
+    }
+    // Any respawn resets the client's player-scoped state (effects, attributes) and gamemode.
+    player.resetTrackedClientState();
+    player.setClientGamemode(packet.getGamemode());
+    return false; // forward
+  }
+
+  @Override
+  public boolean handle(GameEventPacket packet) {
+    if (packet.getEvent() == GameEventPacket.CHANGE_GAME_MODE) {
+      serverConn.getPlayer().setClientGamemode((int) packet.getValue());
+    } else if (packet.getEvent() == GameEventPacket.LEVEL_CHUNKS_LOAD_START
+        && serverConn.consumeSuppressLevelLoadEvent()) {
+      // A packetless switch left no pending level load on the client for this event to
+      // complete; withhold it.
+      return true;
+    }
+    return false; // forward
+  }
+
+  @Override
   public boolean handle(BossBarPacket packet) {
-    if (serverConn.getPlayer().getProtocolVersion().lessThan(ProtocolVersion.MINECRAFT_1_20_2)) {
+    // 1.20.2+ clients clear boss bars when re-entering the configuration state, but a seamless
+    // switch skips it, so tracking is also needed whenever that feature may be used.
+    if (serverConn.getPlayer().getProtocolVersion().lessThan(ProtocolVersion.MINECRAFT_1_20_2)
+        || server.getConfiguration().isSeamlessServerSwitches()) {
       if (packet.getAction() == BossBarPacket.ADD) {
-        playerSessionHandler.getServerBossBars().add(packet.getUuid());
+        logger.debug("Boss bar {} added by {} for {}", packet.getUuid(),
+            serverConn.getServerInfo().getName(), serverConn.getPlayer().getUsername());
+        if (!playerSessionHandler.getServerBossBars().contains(packet.getUuid())) {
+          playerSessionHandler.getServerBossBars().add(packet.getUuid());
+        }
       } else if (packet.getAction() == BossBarPacket.REMOVE) {
+        logger.debug("Boss bar {} removed by {} for {}", packet.getUuid(),
+            serverConn.getServerInfo().getName(), serverConn.getPlayer().getUsername());
         playerSessionHandler.getServerBossBars().remove(packet.getUuid());
       }
     }

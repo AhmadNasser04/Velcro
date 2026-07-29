@@ -169,6 +169,10 @@ accepts-transfers = false
 # threads. Disabled by default. Requires Linux or macOS.
 enable-reuse-port = false
 
+# Whether to do seamless server switches when possible (1.20.5+). This disables secure chat
+# network-wide, so every backend must set enforce-secure-profile=false.
+seamless-server-switches = false
+
 # How fast (in milliseconds) are clients allowed to send commands after the last command
 # By default this is 50ms (20 commands per second)
 command-rate-limit = 50

@@ -67,7 +67,7 @@ tasks {
         exclude("it/unimi/dsi/fastutil/ints/IntLinked*")
         exclude("it/unimi/dsi/fastutil/ints/IntList*")
         exclude("it/unimi/dsi/fastutil/ints/IntHeap*")
-        exclude("it/unimi/dsi/fastutil/ints/IntOpen*")
+        exclude("it/unimi/dsi/fastutil/ints/IntOpenHashBigSet*")
         exclude("it/unimi/dsi/fastutil/ints/IntRB*")
         exclude("it/unimi/dsi/fastutil/ints/IntSorted*")
         exclude("it/unimi/dsi/fastutil/ints/*Priority*")

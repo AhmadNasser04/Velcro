@@ -68,9 +68,14 @@ import com.velocitypowered.proxy.connection.player.resourcepack.VelocityResource
 import com.velocitypowered.proxy.connection.player.resourcepack.handler.ResourcePackHandler;
 import com.velocitypowered.proxy.connection.util.ConnectionMessages;
 import com.velocitypowered.proxy.connection.util.ConnectionRequestResults.Impl;
+import com.velocitypowered.proxy.connection.util.SeamlessSwitchAbortedException;
+import com.velocitypowered.proxy.connection.util.SeamlessSwitchFingerprint;
+import com.velocitypowered.proxy.connection.util.SeamlessWorldTracker;
 import com.velocitypowered.proxy.connection.util.VelocityInboundConnection;
+import com.velocitypowered.proxy.network.Connections;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.netty.MinecraftEncoder;
+import com.velocitypowered.proxy.protocol.netty.PlayerEntityTrackerHandler;
 import com.velocitypowered.proxy.protocol.packet.BundleDelimiterPacket;
 import com.velocitypowered.proxy.protocol.packet.ClientSettingsPacket;
 import com.velocitypowered.proxy.protocol.packet.ClientboundCookieRequestPacket;
@@ -90,6 +95,7 @@ import com.velocitypowered.proxy.protocol.packet.chat.builder.ChatBuilderFactory
 import com.velocitypowered.proxy.protocol.packet.chat.builder.ChatBuilderV2;
 import com.velocitypowered.proxy.protocol.packet.chat.legacy.LegacyChatPacket;
 import com.velocitypowered.proxy.protocol.packet.config.ClientboundServerLinksPacket;
+import com.velocitypowered.proxy.protocol.packet.config.KnownPacksPacket;
 import com.velocitypowered.proxy.protocol.packet.config.StartUpdatePacket;
 import com.velocitypowered.proxy.protocol.packet.title.GenericTitlePacket;
 import com.velocitypowered.proxy.protocol.util.ByteBufDataOutput;
@@ -104,6 +110,8 @@ import com.velocitypowered.proxy.util.TranslatableMapper;
 import com.velocitypowered.proxy.util.collect.CappedSet;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
+import it.unimi.dsi.fastutil.ints.IntSet;
 import java.net.InetSocketAddress;
 import java.util.Collection;
 import java.util.Collections;
@@ -118,6 +126,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.kyori.adventure.bossbar.BossBar;
 import net.kyori.adventure.identity.Identity;
 import net.kyori.adventure.key.Key;
@@ -157,6 +166,11 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   static final PermissionProvider DEFAULT_PERMISSIONS = s -> PermissionFunction.ALWAYS_UNDEFINED;
 
   private static final ComponentLogger logger = ComponentLogger.logger(ConnectedPlayer.class);
+
+  // Velocity owned entity ids, start at 1.6b to hopefully never collide with the paper
+  // backends ids. Assumes a single proxy owns the range (two proxies would hand out
+  // overlapping ids) and wraps negative after ~547m logins in one uptime.
+  private static final AtomicInteger NETWORK_ENTITY_IDS = new AtomicInteger(1_600_000_000);
 
   private static final @NotNull PointersSupplier<ConnectedPlayer> POINTERS_SUPPLIER =
           PointersSupplier.<ConnectedPlayer>builder()
@@ -200,6 +214,22 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   private @Nullable Locale effectiveLocale;
   private final @Nullable IdentifiedKey playerKey;
   private @Nullable ClientSettingsPacket clientSettingsPacket;
+  private @Nullable SeamlessSwitchFingerprint appliedConfigFingerprint;
+  private @Nullable KnownPacksPacket clientKnownPacksResponse;
+  private final int networkEntityId = NETWORK_ENTITY_IDS.incrementAndGet();
+  private int clientEntityId;
+  private @Nullable String currentDimensionName;
+  private final IntSet knownEntityIds = new IntOpenHashSet();
+  private final IntSet activeSelfEffects = new IntOpenHashSet();
+  private final Set<String> knownObjectives = new HashSet<>();
+  private final Set<String> knownTeams = new HashSet<>();
+  private final Set<String> staleObjectives = new HashSet<>();
+  private final Set<String> staleTeams = new HashSet<>();
+  private static final long POSITION_SYNC_TRANSPARENCY_WINDOW = TimeUnit.SECONDS.toNanos(5);
+
+  private final SeamlessWorldTracker worldTracker = new SeamlessWorldTracker();
+  private int clientGamemode = -1;
+  private volatile long positionSyncTransparencyDeadline = 0;
   private volatile ChatQueue chatQueue;
   private final ChatBuilderFactory chatBuilderFactory;
   private final BossBarManager bossBarManager;
@@ -341,6 +371,117 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   @Nullable
   public ClientSettingsPacket getClientSettingsPacket() {
     return clientSettingsPacket;
+  }
+
+  @Nullable
+  public SeamlessSwitchFingerprint getAppliedConfigFingerprint() {
+    return appliedConfigFingerprint;
+  }
+
+  public void setAppliedConfigFingerprint(final SeamlessSwitchFingerprint fingerprint) {
+    this.appliedConfigFingerprint = fingerprint;
+  }
+
+  @Nullable
+  public KnownPacksPacket getClientKnownPacksResponse() {
+    return clientKnownPacksResponse;
+  }
+
+  public void setClientKnownPacksResponse(final KnownPacksPacket response) {
+    this.clientKnownPacksResponse = response;
+  }
+
+  public int getNetworkEntityId() {
+    return networkEntityId;
+  }
+
+  public int getClientEntityId() {
+    return clientEntityId;
+  }
+
+  public void setClientEntityId(final int clientEntityId) {
+    this.clientEntityId = clientEntityId;
+  }
+
+  @Nullable
+  public String getCurrentDimensionName() {
+    return currentDimensionName;
+  }
+
+  public void setCurrentDimensionName(final @Nullable String currentDimensionName) {
+    this.currentDimensionName = currentDimensionName;
+  }
+
+  public IntSet getKnownEntityIds() {
+    return knownEntityIds;
+  }
+
+  public IntSet getActiveSelfEffects() {
+    return activeSelfEffects;
+  }
+
+  public Set<String> getKnownObjectives() {
+    return knownObjectives;
+  }
+
+  public Set<String> getKnownTeams() {
+    return knownTeams;
+  }
+
+  public Set<String> getStaleObjectives() {
+    return staleObjectives;
+  }
+
+  public Set<String> getStaleTeams() {
+    return staleTeams;
+  }
+
+  public int getClientGamemode() {
+    return clientGamemode;
+  }
+
+  public void setClientGamemode(final int clientGamemode) {
+    this.clientGamemode = clientGamemode;
+  }
+
+  public SeamlessWorldTracker getWorldTracker() {
+    return worldTracker;
+  }
+
+  public void resetTrackedClientState() {
+    activeSelfEffects.clear();
+  }
+
+  public void armPositionSyncTransparency() {
+    this.positionSyncTransparencyDeadline = System.nanoTime() + POSITION_SYNC_TRANSPARENCY_WINDOW;
+  }
+
+  /**
+   * Consumes the pending position-sync transparency if armed and fresh; the expiry stops a
+   * switch whose backend never sent its login sync from rewriting a later unrelated teleport.
+   */
+  public boolean consumePositionSyncTransparency() {
+    final long deadline = this.positionSyncTransparencyDeadline;
+    if (deadline == 0) {
+      return false;
+    }
+    this.positionSyncTransparencyDeadline = 0;
+    return System.nanoTime() < deadline;
+  }
+
+  /**
+   * Installs the outbound entity tracker on this connection, placed so it observes every
+   * encoded PLAY packet, including ones written by proxy plugins.
+   */
+  public void installEntityTrackerHandlerIfNeeded() {
+    final var pipeline = connection.getChannel().pipeline();
+    if (pipeline.get(PlayerEntityTrackerHandler.NAME) != null) {
+      return;
+    }
+    final String anchor = pipeline.get(Connections.COMPRESSION_ENCODER) != null
+        ? Connections.COMPRESSION_ENCODER : Connections.FRAME_ENCODER;
+    pipeline.addAfter(anchor, PlayerEntityTrackerHandler.NAME,
+        new PlayerEntityTrackerHandler(this, connection));
   }
 
   @Override
@@ -1486,7 +1627,18 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
               new VelocityServerConnection(vrs, previousServer, ConnectedPlayer.this, server);
           connectionInFlight = con;
 
-          return con.connect().whenCompleteAsync((result, exception) -> {
+          return con.connect().exceptionallyComposeAsync(exception -> {
+            if (!(unwrapCompletionException(exception)
+                instanceof SeamlessSwitchAbortedException)) {
+              return CompletableFuture.failedFuture(exception);
+            }
+            VelocityServerConnection retryCon = new VelocityServerConnection(vrs, previousServer, ConnectedPlayer.this, server);
+            retryCon.setSeamlessAllowed(false);
+            connectionInFlight = retryCon;
+            return retryCon.connect().whenCompleteAsync(
+                (result, retryException) -> this.resetIfInFlightIs(retryCon),
+                connection.eventLoop());
+          }, connection.eventLoop()).whenCompleteAsync((result, exception) -> {
             if (result != null && !result.isSuccessful() && !result.isSafe()) {
               handleConnectionException(result.getAttemptedConnection(),
                   // The only way for the reason to be null is if the result is safe
@@ -1504,6 +1656,13 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
       if (establishedConnection == connectionInFlight) {
         resetInFlightConnection();
       }
+    }
+
+    private Throwable unwrapCompletionException(Throwable throwable) {
+      while (throwable instanceof CompletionException && throwable.getCause() != null) {
+        throwable = throwable.getCause();
+      }
+      return throwable;
     }
 
     @Override

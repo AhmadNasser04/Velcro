@@ -37,6 +37,8 @@ import com.velocitypowered.proxy.connection.player.resourcepack.handler.Resource
 import com.velocitypowered.proxy.connection.util.ConnectionMessages;
 import com.velocitypowered.proxy.connection.util.ConnectionRequestResults;
 import com.velocitypowered.proxy.connection.util.ConnectionRequestResults.Impl;
+import com.velocitypowered.proxy.connection.util.NetworkEntityIdCookie;
+import com.velocitypowered.proxy.connection.util.SeamlessSwitchFingerprint;
 import com.velocitypowered.proxy.protocol.MinecraftPacket;
 import com.velocitypowered.proxy.protocol.StateRegistry;
 import com.velocitypowered.proxy.protocol.netty.MinecraftDecoder;
@@ -49,11 +51,14 @@ import com.velocitypowered.proxy.protocol.packet.PluginMessagePacket;
 import com.velocitypowered.proxy.protocol.packet.RemoveResourcePackPacket;
 import com.velocitypowered.proxy.protocol.packet.ResourcePackRequestPacket;
 import com.velocitypowered.proxy.protocol.packet.ResourcePackResponsePacket;
+import com.velocitypowered.proxy.protocol.packet.ServerboundCookieResponsePacket;
 import com.velocitypowered.proxy.protocol.packet.TransferPacket;
+import com.velocitypowered.proxy.protocol.packet.config.ActiveFeaturesPacket;
 import com.velocitypowered.proxy.protocol.packet.config.ClientboundCustomReportDetailsPacket;
 import com.velocitypowered.proxy.protocol.packet.config.ClientboundServerLinksPacket;
 import com.velocitypowered.proxy.protocol.packet.config.CodeOfConductPacket;
 import com.velocitypowered.proxy.protocol.packet.config.FinishedUpdatePacket;
+import com.velocitypowered.proxy.protocol.packet.config.KnownPacksPacket;
 import com.velocitypowered.proxy.protocol.packet.config.RegistrySyncPacket;
 import com.velocitypowered.proxy.protocol.packet.config.StartUpdatePacket;
 import com.velocitypowered.proxy.protocol.packet.config.TagsUpdatePacket;
@@ -66,6 +71,7 @@ import java.util.concurrent.CompletableFuture;
 import net.kyori.adventure.key.Key;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * A special session handler that catches "last minute" disconnects. This version is to accommodate
@@ -81,6 +87,7 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
   private final CompletableFuture<Impl> resultFuture;
 
   private ResourcePackInfo resourcePackToApply;
+  private SeamlessSwitchFingerprint.@Nullable Builder fingerprintBuilder;
 
   private State state;
 
@@ -102,6 +109,8 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
   @Override
   public void activated() {
     ConnectedPlayer player = serverConn.getPlayer();
+    fingerprintBuilder = server.getConfiguration().isSeamlessServerSwitches()
+        ? SeamlessSwitchFingerprint.builder(player.getProtocolVersion()) : null;
     if (player.getProtocolVersion() == ProtocolVersion.MINECRAFT_1_20_2) {
       resourcePackToApply = player.resourcePackHandler().getFirstAppliedPack();
       player.resourcePackHandler().clearAppliedResourcePacks();
@@ -126,6 +135,27 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(TagsUpdatePacket packet) {
+    if (fingerprintBuilder != null) {
+      fingerprintBuilder.addTags(packet);
+    }
+    serverConn.getPlayer().getConnection().write(packet);
+    return true;
+  }
+
+  @Override
+  public boolean handle(ActiveFeaturesPacket packet) {
+    if (fingerprintBuilder != null) {
+      fingerprintBuilder.addFeatures(packet);
+    }
+    serverConn.getPlayer().getConnection().write(packet);
+    return true;
+  }
+
+  @Override
+  public boolean handle(KnownPacksPacket packet) {
+    if (fingerprintBuilder != null) {
+      fingerprintBuilder.knownPacksQuery(packet.getPacks());
+    }
     serverConn.getPlayer().getConnection().write(packet);
     return true;
   }
@@ -239,8 +269,17 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
 
     smc.getChannel().pipeline().get(MinecraftVarintFrameDecoder.class).setState(StateRegistry.PLAY);
     smc.getChannel().pipeline().get(MinecraftDecoder.class).setState(StateRegistry.PLAY);
+    final SeamlessSwitchFingerprint fingerprint =
+        fingerprintBuilder == null ? null : fingerprintBuilder.build();
+    if (fingerprint != null) {
+      server.getSeamlessSwitchFingerprintCache()
+          .put(serverConn.getServerInfo().getName(), fingerprint);
+    }
     //noinspection DataFlowIssue
     configHandler.handleBackendFinishUpdate(serverConn).thenRunAsync(() -> {
+      if (fingerprint != null) {
+        player.setAppliedConfigFingerprint(fingerprint);
+      }
       smc.write(FinishedUpdatePacket.INSTANCE);
       if (serverConn == player.getConnectedServer()) {
         smc.setActiveSessionHandler(StateRegistry.PLAY);
@@ -306,6 +345,9 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(RegistrySyncPacket packet) {
+    if (fingerprintBuilder != null) {
+      fingerprintBuilder.addRegistry(packet);
+    }
     serverConn.getPlayer().getConnection().write(packet.retain());
     return true;
   }
@@ -355,6 +397,14 @@ public class ConfigSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(ClientboundCookieRequestPacket packet) {
+    if (NetworkEntityIdCookie.KEY.equals(packet.getKey())) {
+      // The backend's companion plugin is asking which entity ID to assign the player; this is a
+      // proxy-backend contract, so answer directly instead of involving the client.
+      serverConn.ensureConnected().write(new ServerboundCookieResponsePacket(
+          NetworkEntityIdCookie.KEY,
+          NetworkEntityIdCookie.encode(serverConn.getPlayer().getNetworkEntityId())));
+      return true;
+    }
     server.getEventManager().fire(new CookieRequestEvent(serverConn.getPlayer(), packet.getKey()))
         .thenAcceptAsync(event -> {
           if (event.getResult().isAllowed()) {
