@@ -73,6 +73,9 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
   private BackendConnectionPhase connectionPhase = BackendConnectionPhases.UNKNOWN;
   private final Map<Long, Long> pendingPings = new HashMap<>();
   private @MonotonicNonNull Integer entityId;
+  private boolean seamlessAllowed = true;
+  private boolean seamlessJoin = false;
+  private boolean suppressLevelLoadEvent = false;
 
   /**
    * Initializes a new server connection.
@@ -130,6 +133,38 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
           }
         });
     return result;
+  }
+
+  public boolean isSeamlessAllowed() {
+    return seamlessAllowed;
+  }
+
+  public void setSeamlessAllowed(final boolean seamlessAllowed) {
+    this.seamlessAllowed = seamlessAllowed;
+  }
+
+  public boolean isSeamlessJoin() {
+    return seamlessJoin;
+  }
+
+  public void setSeamlessJoin(final boolean seamlessJoin) {
+    this.seamlessJoin = seamlessJoin;
+  }
+
+  public void setSuppressLevelLoadEvent(final boolean suppressLevelLoadEvent) {
+    this.suppressLevelLoadEvent = suppressLevelLoadEvent;
+  }
+
+  /**
+   * Consumes the one-shot marker for dropping this server's first "start waiting for level
+   * chunks" game event; after a packetless switch there is no pending level load to complete.
+   */
+  public boolean consumeSuppressLevelLoadEvent() {
+    if (suppressLevelLoadEvent) {
+      suppressLevelLoadEvent = false;
+      return true;
+    }
+    return false;
   }
 
   String getPlayerRemoteAddressAsString() {

@@ -33,14 +33,24 @@ import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
 import com.velocitypowered.proxy.connection.util.ConnectionMessages;
 import com.velocitypowered.proxy.connection.util.ConnectionRequestResults;
 import com.velocitypowered.proxy.connection.util.ConnectionRequestResults.Impl;
+import com.velocitypowered.proxy.connection.util.SeamlessSwitchAbortedException;
+import com.velocitypowered.proxy.protocol.MinecraftPacket;
 import com.velocitypowered.proxy.protocol.StateRegistry;
+import com.velocitypowered.proxy.protocol.packet.BundleDelimiterPacket;
 import com.velocitypowered.proxy.protocol.packet.DisconnectPacket;
 import com.velocitypowered.proxy.protocol.packet.JoinGamePacket;
 import com.velocitypowered.proxy.protocol.packet.KeepAlivePacket;
 import com.velocitypowered.proxy.protocol.packet.PluginMessagePacket;
+import io.netty.buffer.ByteBuf;
+import io.netty.util.ReferenceCountUtil;
+import io.netty.util.concurrent.ScheduledFuture;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * A special session handler that catches "last minute" disconnects.
@@ -49,10 +59,15 @@ public class TransitionSessionHandler implements MinecraftSessionHandler {
 
   private static final Logger logger = LogManager.getLogger(TransitionSessionHandler.class);
 
+  private static final int SEAMLESS_JOIN_TIMEOUT_SECONDS = 10;
+
   private final VelocityServer server;
   private final VelocityServerConnection serverConn;
   private final CompletableFuture<Impl> resultFuture;
   private final BungeeCordMessageResponder bungeecordMessageResponder;
+  private final List<Object> queuedPackets = new ArrayList<>();
+  private boolean joinGameReceived = false;
+  private @Nullable ScheduledFuture<?> joinGameTimeout;
 
   /**
    * Creates the new transition handler.
@@ -69,6 +84,23 @@ public class TransitionSessionHandler implements MinecraftSessionHandler {
     this.resultFuture = resultFuture;
     this.bungeecordMessageResponder = new BungeeCordMessageResponder(server,
         serverConn.getPlayer());
+  }
+
+  @Override
+  public void activated() {
+    if (serverConn.isSeamlessJoin()) {
+      // The client saw nothing of a seamless switch yet, so a backend that never sends its
+      // JoinGame must not wedge the connection request; retry with a normal reconfiguration.
+      joinGameTimeout = serverConn.ensureConnected().eventLoop().schedule(() -> {
+        if (!joinGameReceived) {
+          logger.debug("Timed out waiting for JoinGame from {} for {} on a seamless switch",
+              serverConn.getServerInfo().getName(), serverConn.getPlayer().getUsername());
+          resultFuture.completeExceptionally(
+              new SeamlessSwitchAbortedException("timed out waiting for JoinGame"));
+          serverConn.disconnect();
+        }
+      }, SEAMLESS_JOIN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+    }
   }
 
   @Override
@@ -94,6 +126,11 @@ public class TransitionSessionHandler implements MinecraftSessionHandler {
     final ConnectedPlayer player = serverConn.getPlayer();
     final VelocityServerConnection existingConnection = player.getConnectedServer();
 
+    joinGameReceived = true;
+    cancelJoinGameTimeout();
+    logger.debug("Received JoinGame from {} for {} (seamless join: {})",
+        serverConn.getServerInfo().getName(), player.getUsername(), serverConn.isSeamlessJoin());
+
     if (existingConnection != null) {
       // Shut down the existing server connection.
       player.setConnectedServer(null);
@@ -101,6 +138,19 @@ public class TransitionSessionHandler implements MinecraftSessionHandler {
 
       // Send keep alive to try to avoid timeouts
       player.sendKeepAlive();
+
+      // The old server can no longer close a bundle it left open; close it before the client
+      // receives the JoinGame/Respawn sequence.
+      if (player.getBundleHandler().isInBundleSession()) {
+        player.getBundleHandler().toggleBundleSession();
+        player.getConnection().write(BundleDelimiterPacket.INSTANCE);
+      }
+    }
+
+    if (serverConn.isSeamlessJoin()) {
+      // The client never re-entered the configuration state, so reset the chat state here; the
+      // client resets its own 'last seen' state when it processes the JoinGame packet.
+      player.discardChatQueue();
     }
 
     // Reset Tablist header and footer to prevent desync
@@ -116,8 +166,10 @@ public class TransitionSessionHandler implements MinecraftSessionHandler {
         .thenRunAsync(() -> {
           // Make sure we can still transition (player might have disconnected here).
           if (!serverConn.isActive()) {
-            // Connection is obsolete.
+            // Connection is obsolete. Complete the result so the connection request never hangs.
             serverConn.disconnect();
+            resultFuture.complete(ConnectionRequestResults.forDisconnect(
+                ConnectionMessages.INTERNAL_SERVER_CONNECTION_ERROR, serverConn.getServer()));
             return;
           }
 
@@ -135,11 +187,16 @@ public class TransitionSessionHandler implements MinecraftSessionHandler {
 
           // Set the new play session handler for the server. We will have nothing more to do
           // with this connection once this task finishes up.
-          smc.setActiveSessionHandler(StateRegistry.PLAY,
-              new BackendPlaySessionHandler(server, serverConn));
+          final BackendPlaySessionHandler backendHandler = new BackendPlaySessionHandler(server, serverConn);
+          smc.setActiveSessionHandler(StateRegistry.PLAY, backendHandler);
 
           // Now set the connected server.
           serverConn.getPlayer().setConnectedServer(serverConn);
+
+          // Packets that arrived in the same read batch as the JoinGame (common on low-latency
+          // links) were queued instead of dropped; run them through the new handler in order
+          // before resuming reads.
+          replayQueuedPackets(backendHandler);
 
           // Clean up disabling auto-read while the connected event was being processed.
           // Do this after setting the connection, so no incoming packets are processed before
@@ -160,6 +217,7 @@ public class TransitionSessionHandler implements MinecraftSessionHandler {
           logger.error("Unable to switch to new server {} for {}",
               serverConn.getServerInfo().getName(),
               player.getUsername(), exc);
+          releaseQueuedPackets();
           player.disconnect(ConnectionMessages.INTERNAL_SERVER_CONNECTION_ERROR);
           resultFuture.completeExceptionally(exc);
           return null;
@@ -183,6 +241,7 @@ public class TransitionSessionHandler implements MinecraftSessionHandler {
       resultFuture.complete(ConnectionRequestResults.forDisconnect(packet, serverConn.getServer()));
     }
 
+    rescueFromLimbo();
     return true;
   }
 
@@ -214,8 +273,72 @@ public class TransitionSessionHandler implements MinecraftSessionHandler {
   }
 
   @Override
+  public void handleGeneric(MinecraftPacket packet) {
+    if (joinGameReceived) {
+      ReferenceCountUtil.retain(packet);
+      queuedPackets.add(packet);
+    }
+  }
+
+  @Override
+  public void handleUnknown(ByteBuf buf) {
+    if (joinGameReceived) {
+      queuedPackets.add(buf.retain());
+    }
+  }
+
+  @Override
   public void disconnected() {
+    cancelJoinGameTimeout();
+    releaseQueuedPackets();
     resultFuture.complete(ConnectionRequestResults.forDisconnect(
         ConnectionMessages.INTERNAL_SERVER_CONNECTION_ERROR, serverConn.getServer()));
+    rescueFromLimbo();
+  }
+
+  private void rescueFromLimbo() {
+    final ConnectedPlayer player = serverConn.getPlayer();
+    if (joinGameReceived && player.getConnectedServer() == null
+        && player.getConnection().getChannel().isActive()) {
+      logger.debug("Backend {} died mid-transition for {}; running kick handling",
+          serverConn.getServerInfo().getName(), player.getUsername());
+      player.handleConnectionException(
+          serverConn.getServer(),
+          DisconnectPacket.create(ConnectionMessages.INTERNAL_SERVER_CONNECTION_ERROR,
+              player.getProtocolVersion(), player.getConnection().getState()),
+          true
+      );
+    }
+  }
+
+  private void cancelJoinGameTimeout() {
+    if (joinGameTimeout != null) {
+      joinGameTimeout.cancel(false);
+      joinGameTimeout = null;
+    }
+  }
+
+  private void replayQueuedPackets(MinecraftSessionHandler handler) {
+    for (final Object msg : queuedPackets) {
+      try {
+        if (msg instanceof MinecraftPacket packet) {
+          if (!packet.handle(handler)) {
+            handler.handleGeneric(packet);
+          }
+        } else if (msg instanceof ByteBuf buf) {
+          handler.handleUnknown(buf);
+        }
+      } finally {
+        ReferenceCountUtil.release(msg);
+      }
+    }
+    queuedPackets.clear();
+  }
+
+  private void releaseQueuedPackets() {
+    for (final Object msg : queuedPackets) {
+      ReferenceCountUtil.release(msg);
+    }
+    queuedPackets.clear();
   }
 }

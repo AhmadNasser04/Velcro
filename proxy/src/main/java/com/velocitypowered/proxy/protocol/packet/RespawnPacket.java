@@ -36,7 +36,7 @@ public class RespawnPacket implements MinecraftPacket {
   private short gamemode;
   private String levelType = "";
   private byte dataToKeep; // 1.16+
-  private DimensionInfo dimensionInfo; // 1.16-1.16.1
+  private @Nullable DimensionInfo dimensionInfo; // null before 1.16
   private short previousGamemode; // 1.16+
   private CompoundBinaryTag currentDimensionData; // 1.16.2+
   private @Nullable Pair<String, Long> lastDeathPosition; // 1.19+
@@ -47,7 +47,7 @@ public class RespawnPacket implements MinecraftPacket {
   }
 
   public RespawnPacket(int dimension, long partialHashedSeed, short difficulty, short gamemode,
-                       String levelType, byte dataToKeep, DimensionInfo dimensionInfo,
+                       String levelType, byte dataToKeep, @Nullable DimensionInfo dimensionInfo,
                        short previousGamemode, CompoundBinaryTag currentDimensionData,
                        @Nullable Pair<String, Long> lastDeathPosition, int portalCooldown,
                        int seaLevel) {
@@ -119,6 +119,10 @@ public class RespawnPacket implements MinecraftPacket {
 
   public void setDataToKeep(byte dataToKeep) {
     this.dataToKeep = dataToKeep;
+  }
+
+  public @Nullable DimensionInfo getDimensionInfo() {
+    return dimensionInfo;
   }
 
   public short getPreviousGamemode() {
