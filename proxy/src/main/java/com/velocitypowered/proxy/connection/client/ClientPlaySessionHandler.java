@@ -548,12 +548,20 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
       return;
     }
 
-    if (server.getConfiguration().isSeamlessServerSwitches() && isChatSessionUpdate(buf)) {
-      // A signed chat chain cannot survive a packetless switch: only a JoinGame makes the
-      // client restart its chain and announce a fresh session, so a switched-to backend would
-      // reject everything signed against the old one and the client's chat breaks. Withhold
-      // the session from every backend instead; outgoing chat is forwarded unsigned.
-      return;
+    // Movement packets come through here, so the id is read once and only when the feature
+    // that needs it is on.
+    if (server.getConfiguration().isSeamlessServerSwitches() && trackedPackets != null) {
+      final int packetId = ProtocolUtils.readVarInt(buf.duplicate());
+      if (packetId == trackedPackets.serverboundContainerCloseId()) {
+        // The client closed its screen itself, so there is nothing left to close on a switch.
+        player.setOpenContainerId(-1);
+      } else if (packetId == trackedPackets.chatSessionUpdateId()) {
+        // A signed chat chain cannot survive a packetless switch: only a JoinGame makes the
+        // client restart its chain and announce a fresh session, so a switched-to backend would
+        // reject everything signed against the old one and the client's chat breaks. Withhold
+        // the session from every backend instead; outgoing chat is forwarded unsigned.
+        return;
+      }
     }
 
     MinecraftConnection smc = serverConnection.getConnection();
@@ -564,10 +572,6 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
     if (stateAllowsForward) {
       smc.write(buf.retain());
     }
-  }
-
-  private boolean isChatSessionUpdate(ByteBuf buf) {
-    return trackedPackets != null && ProtocolUtils.readVarInt(buf.duplicate()) == trackedPackets.chatSessionUpdateId();
   }
 
   @Override
@@ -821,6 +825,25 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
   }
 
   private void doSeamlessServerSwitch(JoinGamePacket joinGame, VelocityServerConnection destination) {
+    final int clientEntityId = player.getClientEntityId();
+
+    // Put the camera back before the entity it is attached to is removed below, otherwise the
+    // client is left spectating an entity that no longer exists.
+    if (player.getCameraEntityId() != -1 && player.getCameraEntityId() != clientEntityId) {
+      player.getConnection().delayedWrite(ClientStateTracker.createSetCameraPacket(
+          player.getProtocolVersion(), clientEntityId,
+          player.getConnection().getChannel().alloc()));
+    }
+
+    // Only a JoinGame or a reconfiguration closes the client's screen, and a packetless switch
+    // sends neither, so a container left open would stay on screen with a container id the new
+    // server knows nothing about (every click silently ignored).
+    if (player.getOpenContainerId() != -1) {
+      player.getConnection().delayedWrite(ClientStateTracker.createContainerClosePacket(
+          player.getProtocolVersion(), player.getOpenContainerId(),
+          player.getConnection().getChannel().alloc()));
+    }
+
     // The world is kept, so everything the previous server (or a plugin, on its behalf) showed
     // the client must be removed explicitly.
     final IntSet ghostEntities = new IntOpenHashSet(player.getKnownEntityIds());

@@ -38,7 +38,12 @@ package com.velocitypowered.proxy.protocol.tracking;
  * @param setObjectiveId the update-objectives packet ID
  * @param setPlayerTeamId the update-teams packet ID
  * @param playerPositionId the player-position (synchronize position) packet ID
+ * @param openScreenId the open-screen packet ID
+ * @param containerCloseId the clientbound container-close packet ID
+ * @param horseScreenOpenId the horse/mount screen open packet ID
+ * @param setCameraId the set-camera packet ID
  * @param chatSessionUpdateId the serverbound chat-session-update packet ID
+ * @param serverboundContainerCloseId the serverbound container-close packet ID
  */
 public record TrackedPackets(
     int addEntityId,
@@ -55,6 +60,11 @@ public record TrackedPackets(
     int setObjectiveId,
     int setPlayerTeamId,
     int playerPositionId,
-    int chatSessionUpdateId
+    int openScreenId,
+    int containerCloseId,
+    int horseScreenOpenId,
+    int setCameraId,
+    int chatSessionUpdateId,
+    int serverboundContainerCloseId
 ) {
 }
