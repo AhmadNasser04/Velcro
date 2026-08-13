@@ -90,6 +90,7 @@ public class PlayerEntityTrackerHandler extends ChannelOutboundHandlerAdapter {
         ClientStateTracker.trackOutbound(table, packetId, work, player.getClientEntityId(),
             player.getKnownEntityIds(), player.getActiveSelfEffects());
         handleScoreboard(ctx, packetId, work);
+        handleScreens(packetId, work);
       } catch (final Exception e) {
         // Never block delivery, but a parse failure means tracked state is drifting
         // (usually a packet format change), so log it.
@@ -153,6 +154,19 @@ public class PlayerEntityTrackerHandler extends ChannelOutboundHandlerAdapter {
     } else if (mode == ClientStateTracker.SCOREBOARD_MODE_REMOVE) {
       known.remove(name);
       stale.remove(name);
+    }
+  }
+
+  private void handleScreens(final int packetId, final ByteBuf work) {
+    if (packetId == table.openScreenId()) {
+      player.setOpenContainerId(ProtocolUtils.readVarInt(work));
+    } else if (table.horseScreenOpenId() != -1 && packetId == table.horseScreenOpenId()) {
+      player.setOpenContainerId(
+          ClientStateTracker.readContainerId(work, player.getProtocolVersion()));
+    } else if (packetId == table.containerCloseId()) {
+      player.setOpenContainerId(-1);
+    } else if (packetId == table.setCameraId()) {
+      player.setCameraEntityId(ProtocolUtils.readVarInt(work));
     }
   }
 

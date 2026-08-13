@@ -48,7 +48,7 @@ class ClientStateTrackerTest {
   void protocol773TableMatchesHandVerifiedIds() {
     final TrackedPackets table = ClientStateTracker.tableFor(ProtocolVersion.MINECRAFT_1_21_9);
     assertEquals(new TrackedPackets(0x01, -1, 0x4B, 0x82, 0x4C, 0x2C, 0x25, 0x5C, 0x5D, 0x83,
-        0x84, 0x68, 0x6B, 0x46, 0x09), table);
+        0x84, 0x68, 0x6B, 0x46, 0x39, 0x11, 0x28, 0x5B, 0x09, 0x12), table);
     assertEquals(table, ClientStateTracker.tableFor(ProtocolVersion.MINECRAFT_1_21_11));
   }
 
@@ -64,6 +64,28 @@ class ClientStateTrackerTest {
     assertEquals(ClientStateTracker.SCOREBOARD_MODE_REMOVE, remove.readByte());
     assertEquals(0, remove.readableBytes(), "removal must carry nothing after the mode byte");
     remove.release();
+  }
+
+  @Test
+  void containerCloseUsesTheRightIdWidthPerVersion() {
+    final io.netty.buffer.ByteBuf modern = ClientStateTracker.createContainerClosePacket(
+        ProtocolVersion.MINECRAFT_1_21_9, 200,
+        io.netty.buffer.UnpooledByteBufAllocator.DEFAULT);
+    assertEquals(ClientStateTracker.tableFor(ProtocolVersion.MINECRAFT_1_21_9).containerCloseId(),
+        com.velocitypowered.proxy.protocol.ProtocolUtils.readVarInt(modern));
+    assertEquals(200, com.velocitypowered.proxy.protocol.ProtocolUtils.readVarInt(modern));
+    assertEquals(0, modern.readableBytes());
+    modern.release();
+
+    // Container ids were a byte before 1.21.2.
+    final io.netty.buffer.ByteBuf legacy = ClientStateTracker.createContainerClosePacket(
+        ProtocolVersion.MINECRAFT_1_21, 200,
+        io.netty.buffer.UnpooledByteBufAllocator.DEFAULT);
+    assertEquals(ClientStateTracker.tableFor(ProtocolVersion.MINECRAFT_1_21).containerCloseId(),
+        com.velocitypowered.proxy.protocol.ProtocolUtils.readVarInt(legacy));
+    assertEquals(200, legacy.readUnsignedByte());
+    assertEquals(0, legacy.readableBytes());
+    legacy.release();
   }
 
   @Test

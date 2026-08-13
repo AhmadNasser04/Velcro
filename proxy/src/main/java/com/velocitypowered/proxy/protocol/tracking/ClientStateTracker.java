@@ -130,6 +130,42 @@ public final class ClientStateTracker {
   }
 
   /**
+   * Reads a container id, a byte before 1.21.2 and a varint from it on.
+   */
+  public static int readContainerId(final ByteBuf buf, final ProtocolVersion version) {
+    return version.noLessThan(ProtocolVersion.MINECRAFT_1_21_2)
+        ? ProtocolUtils.readVarInt(buf) : buf.readUnsignedByte();
+  }
+
+  /**
+   * Builds a raw clientbound container-close packet, which closes whatever screen the client
+   * has open. A seamless switch sends no JoinGame, so nothing else would close it.
+   */
+  public static ByteBuf createContainerClosePacket(final ProtocolVersion version,
+      final int containerId, final ByteBufAllocator alloc) {
+    final ByteBuf buf = alloc.buffer(8);
+    ProtocolUtils.writeVarInt(buf, requireTable(version).containerCloseId());
+    if (version.noLessThan(ProtocolVersion.MINECRAFT_1_21_2)) {
+      ProtocolUtils.writeVarInt(buf, containerId);
+    } else {
+      buf.writeByte(containerId);
+    }
+    return buf;
+  }
+
+  /**
+   * Builds a raw clientbound set-camera packet, used to put the camera back on the player's own
+   * entity before the previous server's camera target is removed.
+   */
+  public static ByteBuf createSetCameraPacket(final ProtocolVersion version,
+      final int entityId, final ByteBufAllocator alloc) {
+    final ByteBuf buf = alloc.buffer(8);
+    ProtocolUtils.writeVarInt(buf, requireTable(version).setCameraId());
+    ProtocolUtils.writeVarInt(buf, entityId);
+    return buf;
+  }
+
+  /**
    * Builds a raw clientbound remove-entities packet for the given IDs.
    */
   public static ByteBuf createRemoveEntitiesPacket(final ProtocolVersion version,
