@@ -226,6 +226,8 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
 
   private final SeamlessWorldTracker worldTracker = new SeamlessWorldTracker();
   private int clientGamemode = -1;
+  private int openContainerId = -1;
+  private int cameraEntityId = -1;
   private volatile long positionSyncTransparencyDeadline = 0;
   private volatile ChatQueue chatQueue;
   private final ChatBuilderFactory chatBuilderFactory;
@@ -445,8 +447,30 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     return worldTracker;
   }
 
+  public int getOpenContainerId() {
+    return openContainerId;
+  }
+
+  public void setOpenContainerId(final int openContainerId) {
+    this.openContainerId = openContainerId;
+  }
+
+  public int getCameraEntityId() {
+    return cameraEntityId;
+  }
+
+  public void setCameraEntityId(final int cameraEntityId) {
+    this.cameraEntityId = cameraEntityId;
+  }
+
+  /**
+   * Resets tracked player state after a JoinGame or Respawn, both of which close the client's
+   * screen and put its camera back on itself.
+   */
   public void resetTrackedClientState() {
     activeSelfEffects.clear();
+    openContainerId = -1;
+    cameraEntityId = -1;
   }
 
   public void armPositionSyncTransparency() {

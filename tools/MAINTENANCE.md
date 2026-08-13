@@ -34,8 +34,9 @@ this before changing things.
    in the wrong world
 4. run the tests. `ClientStateTrackerTest` pins protocol 773's ids as a generator canary
 
-If the script exits complaining a packet is missing, it got renamed or removed. Renames: fix
-`TRACKED_CLIENTBOUND`. Removed: add it to `OPTIONAL` so it's emitted as -1, which is how
+If the script exits complaining a packet is missing, it got renamed or removed. Renames: add
+the new name to `ALIASES`, which is how `horse_screen_open` becoming `mount_screen_open` in
+26.2 is handled. Removed: add it to `OPTIONAL` so it's emitted as -1, which is how
 `add_experience_orb` is handled (merged into `add_entity` in 1.21.5).
 
 ## Wire formats the tracker assumes
@@ -44,6 +45,10 @@ If the script exits complaining a packet is missing, it got renamed or removed. 
 - forget chunk: one long, z in the high bits so z reads first
 - objectives/teams: string name then mode byte (0 create, 1 remove)
 - add entity / experience orb / effect packets: varint entity id first
+- open_screen: varint container id (varint on every version, unlike the close packet)
+- container close and horse/mount screen open: container id is u8 before 1.21.2, varint from
+  it on (`ClientStateTracker.readContainerId`)
+- set_camera: varint entity id
 - position sync (1.21.2+): varint teleport id, 3 doubles position, 3 doubles delta, yaw,
   pitch, int flags
 

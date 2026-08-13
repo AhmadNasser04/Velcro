@@ -56,17 +56,27 @@ TRACKED_CLIENTBOUND = [
     "minecraft:set_objective",
     "minecraft:set_player_team",
     "minecraft:player_position",
+    "minecraft:open_screen",
+    "minecraft:container_close",
+    "minecraft:horse_screen_open",
+    "minecraft:set_camera",
 ]
 
 # Serverbound PLAY packets, appended after the clientbound IDs in constructor order.
 TRACKED_SERVERBOUND = [
     "minecraft:chat_session_update",
+    "minecraft:container_close",
 ]
 
 # Packets that only exist in some of the supported versions; absent ones are emitted as -1.
 # add_experience_orb was folded into add_entity in 1.21.5.
 OPTIONAL = {
     "minecraft:add_experience_orb",
+}
+
+# Packets that were renamed; the first name present in the report wins.
+ALIASES = {
+    "minecraft:horse_screen_open": ("minecraft:mount_screen_open",),
 }
 
 # The same packets under minecraft-data's names, used for versions that predate the
@@ -86,10 +96,15 @@ MCDATA_NAMES = [
     "scoreboard_objective",
     "teams",
     "position",
+    "open_window",
+    "close_window",
+    "open_horse_window",
+    "camera",
 ]
 
 MCDATA_SERVERBOUND = [
     "chat_session_update",
+    "close_window",
 ]
 
 MANIFEST_URL = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
@@ -194,6 +209,11 @@ def extract_ids(report, mc_version):
                              ("serverbound", TRACKED_SERVERBOUND)):
         packets = report["play"][direction]
         for name in names:
+            if name not in packets:
+                for alias in ALIASES.get(name, ()):
+                    if alias in packets:
+                        name = alias
+                        break
             if name not in packets:
                 if name in OPTIONAL:
                     ids.append(-1)
