@@ -13,7 +13,10 @@ doesn't match falls back to a normal switch. Internals are documented in
 ## Setup
 
 - `./gradlew build`, run the `-all` jar from `proxy/build/libs` like normal Velocity
-- `./gradlew :companion:build`, drop the jar in every backend's `plugins/` folder
+- `./gradlew :companion:build`, drop the right jar in every backend's `plugins/` folder:
+  `velcro-companion-modern` for Paper builds with
+  `PaperPlayerConfigurationConnection#setInternalPluginDefinedEntityId`,
+  `velcro-companion-legacy` for older ones (1.21.11+)
 - set `enforce-secure-profile=false` on every backend. Chat is forwarded unsigned since
   signed chat can't survive a switch without a JoinGame
 - in velocity.toml:

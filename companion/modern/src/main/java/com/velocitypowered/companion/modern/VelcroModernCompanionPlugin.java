@@ -15,14 +15,22 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-package com.velocitypowered.companion;
+package com.velocitypowered.companion.modern;
 
-import org.bukkit.plugin.java.JavaPlugin;
+import com.velocitypowered.companion.VelcroCompanionPlugin;
 
-public final class VelcroCompanionPlugin extends JavaPlugin {
+public final class VelcroModernCompanionPlugin extends VelcroCompanionPlugin {
     @Override
     public void onEnable() {
+        if (!hasPluginDefinedEntityIdApi()) {
+            getSLF4JLogger().error(
+                "This Paper build predates PaperPlayerConfigurationConnection#setInternalPluginDefinedEntityId; "
+                    + "install the velcro-companion-legacy jar instead."
+            );
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
+        super.onEnable();
         getServer().getPluginManager().registerEvents(new NetworkEntityIdListener(this), this);
-        getServer().getPluginManager().registerEvents(new BossBarViewerCleanupListener(), this);
     }
 }

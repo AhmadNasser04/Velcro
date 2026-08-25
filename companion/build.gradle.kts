@@ -1,38 +1,38 @@
-import io.papermc.paperweight.userdev.ReobfArtifactConfiguration
 import java.util.Properties
 
 plugins {
-    `java-library`
-    id("io.papermc.paperweight.userdev") version "2.0.0-beta.21"
+    base
 }
 
 val rootProperties = Properties().apply {
     rootDir.parentFile.resolve("gradle.properties").inputStream().use(::load)
 }
 
-group = rootProperties.getProperty("group")
-version = rootProperties.getProperty("version")
+subprojects {
+    apply(plugin = "java-library")
 
-java {
-    toolchain {
-        languageVersion.set(JavaLanguageVersion.of(25))
+    group = rootProperties.getProperty("group")
+    version = rootProperties.getProperty("version")
+
+    extensions.configure<JavaPluginExtension> {
+        toolchain {
+            languageVersion.set(JavaLanguageVersion.of(25))
+        }
+    }
+
+    repositories {
+        mavenCentral()
+        maven("https://repo.papermc.io/repository/maven-public/")
+    }
+
+    tasks.withType<ProcessResources>().configureEach {
+        inputs.property("version", project.version)
+        filesMatching("plugin.yml") {
+            expand("version" to project.version)
+        }
     }
 }
 
-repositories {
-    mavenCentral()
-    maven("https://repo.papermc.io/repository/maven-public/")
-}
-
-paperweight.reobfArtifactConfiguration = ReobfArtifactConfiguration.MOJANG_PRODUCTION
-
-dependencies {
-    paperweight.paperDevBundle("26.2.build.+")
-}
-
-tasks.processResources {
-    inputs.property("version", project.version)
-    filesMatching("plugin.yml") {
-        expand("version" to project.version)
-    }
+tasks.build {
+    dependsOn(subprojects.map { "${it.path}:build" })
 }

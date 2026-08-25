@@ -17,57 +17,46 @@
 
 package com.velocitypowered.companion;
 
-import io.papermc.paper.connection.PaperPlayerConfigurationConnection;
-import io.papermc.paper.event.connection.configuration.AsyncPlayerConnectionConfigureEvent;
+import io.papermc.paper.connection.ReadablePlayerCookieConnection;
 
+import java.util.OptionalInt;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import org.bukkit.NamespacedKey;
-import org.bukkit.event.EventHandler;
-import org.bukkit.event.Listener;
+import org.slf4j.Logger;
 
-public final class NetworkEntityIdListener implements Listener {
-    private static final NamespacedKey COOKIE_KEY = new NamespacedKey("velcro", "entity_id");
+public final class EntityIdCookie {
+    public static final NamespacedKey KEY = new NamespacedKey("velcro", "entity_id");
     private static final int PAYLOAD_LENGTH = 4;
-    private static final long COOKIE_TIMEOUT_SECONDS = 2;
+    private static final long TIMEOUT_SECONDS = 2;
 
-    private final VelcroCompanionPlugin plugin;
+    private EntityIdCookie() {}
 
-    NetworkEntityIdListener(final VelcroCompanionPlugin plugin) {
-        this.plugin = plugin;
-    }
-
-    @EventHandler
-    public void onConnectionConfigure(final AsyncPlayerConnectionConfigureEvent event) {
-        final PaperPlayerConfigurationConnection connection = (PaperPlayerConfigurationConnection) event.getConnection();
-        final UUID playerId = connection.getProfile().getId();
-        if (playerId == null) {
-            return;
-        }
-
+    public static OptionalInt retrieve(final ReadablePlayerCookieConnection connection, final UUID playerId, final Logger logger) {
         try {
-            final byte[] payload = connection.retrieveCookie(COOKIE_KEY).get(COOKIE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            final byte[] payload = connection.retrieveCookie(KEY).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
             if (payload.length != PAYLOAD_LENGTH) {
-                plugin.getSLF4JLogger().warn(
+                logger.warn(
                     "Ignoring malformed {} cookie for {} ({} bytes, expected {})",
-                    COOKIE_KEY, playerId, payload.length, PAYLOAD_LENGTH
+                    KEY, playerId, payload.length, PAYLOAD_LENGTH
                 );
-                return;
+                return OptionalInt.empty();
             }
-            connection.setInternalPluginDefinedEntityId(decode(payload));
+            return OptionalInt.of(decode(payload));
         } catch (final TimeoutException e) {
-            plugin.getSLF4JLogger().warn(
+            logger.warn(
                 "Timed out retrieving the {} cookie for {}; their server switches will not be seamless",
-                COOKIE_KEY, playerId
+                KEY, playerId
             );
         } catch (final ExecutionException e) {
-            plugin.getSLF4JLogger().warn("Failed to retrieve the {} cookie for {}", COOKIE_KEY, playerId, e.getCause());
+            logger.warn("Failed to retrieve the {} cookie for {}", KEY, playerId, e.getCause());
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+        return OptionalInt.empty();
     }
 
     private static int decode(final byte[] payload) {
