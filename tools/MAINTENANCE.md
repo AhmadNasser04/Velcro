@@ -20,7 +20,11 @@ this before changing things.
   reconciliation, chat session withholding
 - `TransitionSessionHandler` - waits for JoinGame after an absorbed config phase, times out
   back to a normal switch
-- `companion/` - Paper plugin that pins the proxy-owned entity id (`velcro:entity_id` cookie)
+- `companion/` - Paper plugin that pins the proxy-owned entity id (`velcro:entity_id` cookie).
+  Two jars from shared `common/` logic: `modern/` uses
+  `PaperPlayerConfigurationConnection#setInternalPluginDefinedEntityId`, `legacy/` covers Paper
+  builds without it (back to 1.21.11, the oldest with the connection API) by stashing the id at
+  the configure event and reflectively calling `getHandle().setId()` at `PlayerSpawnLocationEvent`
 
 ## Adding a version
 

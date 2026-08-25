@@ -1,6 +1,6 @@
 name: VelcroCompanion
 version: '${version}'
-main: com.velocitypowered.companion.VelcroCompanionPlugin
-api-version: '26.2'
+main: com.velocitypowered.companion.legacy.VelcroLegacyCompanionPlugin
+api-version: '1.21'
 description: Assigns players the proxy-owned entity ID required for Velcro's seamless server switches.
 website: https://github.com/AhmadNasser04/Velcro
