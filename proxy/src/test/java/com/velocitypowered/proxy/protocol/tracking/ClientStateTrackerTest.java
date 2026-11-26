@@ -29,7 +29,7 @@ import org.junit.jupiter.api.Test;
 class ClientStateTrackerTest {
 
   private static final Set<ProtocolVersion> EXPECTED_SUPPORTED = EnumSet.range(
-      ProtocolVersion.MINECRAFT_1_20_5, ProtocolVersion.MINECRAFT_26_2);
+      ProtocolVersion.MINECRAFT_1_20_5, ProtocolVersion.MINECRAFT_26_3);
 
   @Test
   void supportsEveryCookieCapableVersion() {

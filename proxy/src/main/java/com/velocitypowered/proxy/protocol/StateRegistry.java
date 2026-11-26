@@ -601,7 +601,8 @@ public enum StateRegistry {
           map(0x22, MINECRAFT_1_20_5, false),
           map(0x23, MINECRAFT_1_21_2, false),
           map(0x22, MINECRAFT_1_21_5, false),
-          map(0x26, MINECRAFT_1_21_9, false));
+          map(0x26, MINECRAFT_1_21_9, false),
+          map(0x27, MINECRAFT_26_3, false));
       clientbound.register(
           RespawnPacket.class,
           RespawnPacket::new,
@@ -628,7 +629,7 @@ public enum StateRegistry {
           map(0x4B, MINECRAFT_1_21_5, false),
           map(0x50, MINECRAFT_1_21_9, false),
           map(0x52, MINECRAFT_26_1, false),
-          map(0x54, MINECRAFT_26_3, true));
+          map(0x54, MINECRAFT_26_3, false));
       clientbound.register(
           RemoveResourcePackPacket.class,
           RemoveResourcePackPacket::new,

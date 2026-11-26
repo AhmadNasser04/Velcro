@@ -26,7 +26,7 @@ doesn't match falls back to a normal switch. Internals are documented in
 seamless-server-switches = true
 ```
 
-Config phase skipping needs 1.20.2+ clients. Fully packetless switches need 1.20.5-26.2 and
+Config phase skipping needs 1.20.2+ clients. Fully packetless switches need 1.20.5-26.3 and
 identical datapacks/plugins across the backends. Older clients behave like stock Velocity.
 
 ## Adding a version

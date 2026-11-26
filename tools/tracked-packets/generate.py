@@ -37,6 +37,7 @@ VERSIONS = [
     ("MINECRAFT_1_21_11", 774, "1.21.11"),
     ("MINECRAFT_26_1", 775, "26.1.2"),
     ("MINECRAFT_26_2", 776, "26.2"),
+    ("MINECRAFT_26_3", 777, "26.3"),
 ]
 
 # The clientbound PLAY packets the proxy tracks, in TrackedPackets constructor order,
