@@ -49,6 +49,7 @@ import com.velocitypowered.proxy.command.builtin.VelocityCommand;
 import com.velocitypowered.proxy.config.VelocityConfiguration;
 import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
 import com.velocitypowered.proxy.connection.player.resourcepack.VelocityResourcePackInfo;
+import com.velocitypowered.proxy.connection.util.NetworkEntityIds;
 import com.velocitypowered.proxy.connection.util.SeamlessSwitchFingerprintCache;
 import com.velocitypowered.proxy.connection.util.ServerListPingHandler;
 import com.velocitypowered.proxy.console.VelocityConsole;
@@ -177,6 +178,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   private final VelocityChannelRegistrar channelRegistrar = new VelocityChannelRegistrar();
   private final ServerListPingHandler serverListPingHandler;
   private final SeamlessSwitchFingerprintCache seamlessSwitchFingerprintCache = new SeamlessSwitchFingerprintCache();
+  private final NetworkEntityIds networkEntityIds;
 
   VelocityServer(final ProxyOptions options) {
     pluginManager = new VelocityPluginManager(this);
@@ -188,6 +190,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     servers = new ServerMap(this);
     serverListPingHandler = new ServerListPingHandler(this);
     this.options = options;
+    this.networkEntityIds = new NetworkEntityIds(options.getProxyIndex());
   }
 
   public KeyPair getServerKeyPair() {
@@ -474,6 +477,10 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
 
   public SeamlessSwitchFingerprintCache getSeamlessSwitchFingerprintCache() {
     return seamlessSwitchFingerprintCache;
+  }
+
+  public NetworkEntityIds getNetworkEntityIds() {
+    return networkEntityIds;
   }
 
   public boolean isShutdown() {

@@ -43,6 +43,7 @@ public final class ProxyOptions {
   private final @Nullable Boolean haproxy;
   private final boolean ignoreConfigServers;
   private final List<ServerInfo> servers;
+  private final int proxyIndex;
 
   ProxyOptions(final String[] args) {
     final OptionParser parser = new OptionParser();
@@ -64,6 +65,11 @@ public final class ProxyOptions {
     final OptionSpec<Void> ignoreConfigServers = parser.accepts("ignore-config-servers",
             "Skip registering servers from the config file. "
                     + "Useful in dynamic setups or with the --add-server flag.");
+    final OptionSpec<Integer> proxyIndex = parser.accepts("proxy-index",
+            "Set this proxy's number on the network, from 0 to 31. Seamless server switches "
+                    + "give players entity IDs from a block picked by it, so every proxy of "
+                    + "one network needs its own.")
+        .withRequiredArg().ofType(Integer.class).defaultsTo(0);
     final OptionSet set = parser.parse(args);
 
     this.help = set.has(help);
@@ -71,6 +77,7 @@ public final class ProxyOptions {
     this.haproxy = haproxy.value(set);
     this.servers = servers.values(set);
     this.ignoreConfigServers = set.has(ignoreConfigServers);
+    this.proxyIndex = proxyIndex.value(set);
 
     if (this.help) {
       try {
@@ -99,6 +106,10 @@ public final class ProxyOptions {
 
   public List<ServerInfo> getServers() {
     return this.servers;
+  }
+
+  public int getProxyIndex() {
+    return this.proxyIndex;
   }
 
   private static class ServerInfoConverter implements ValueConverter<ServerInfo> {

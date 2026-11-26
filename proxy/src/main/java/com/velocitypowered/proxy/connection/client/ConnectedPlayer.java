@@ -126,7 +126,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import net.kyori.adventure.bossbar.BossBar;
 import net.kyori.adventure.identity.Identity;
 import net.kyori.adventure.key.Key;
@@ -165,11 +164,6 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   static final PermissionProvider DEFAULT_PERMISSIONS = s -> PermissionFunction.ALWAYS_UNDEFINED;
 
   private static final ComponentLogger logger = ComponentLogger.logger(ConnectedPlayer.class);
-
-  // Velocity owned entity ids, start at 1.6b to hopefully never collide with the paper
-  // backends ids. Assumes a single proxy owns the range (two proxies would hand out
-  // overlapping ids) and wraps negative after ~547m logins in one uptime.
-  private static final AtomicInteger NETWORK_ENTITY_IDS = new AtomicInteger(1_600_000_000);
 
   private static final @NotNull PointersSupplier<ConnectedPlayer> POINTERS_SUPPLIER =
           PointersSupplier.<ConnectedPlayer>builder()
@@ -214,7 +208,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   private @Nullable ClientSettingsPacket clientSettingsPacket;
   private @Nullable SeamlessSwitchFingerprint appliedConfigFingerprint;
   private @Nullable KnownPacksPacket clientKnownPacksResponse;
-  private final int networkEntityId = NETWORK_ENTITY_IDS.incrementAndGet();
+  private final int networkEntityId;
   private int clientEntityId;
   private @Nullable String currentDimensionName;
   private final IntSet knownEntityIds = new IntOpenHashSet();
@@ -247,6 +241,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     this.connectionPhase = connection.getType().getInitialClientPhase();
     this.onlineMode = onlineMode;
     this.clientsideChannels = CappedSet.create(MAX_CLIENTSIDE_PLUGIN_CHANNELS);
+    this.networkEntityId = server.getNetworkEntityIds().next();
 
     if (connection.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_19_3)) {
       this.tabList = new VelocityTabList(this);

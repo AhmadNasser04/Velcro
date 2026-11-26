@@ -26,6 +26,10 @@ doesn't match falls back to a normal switch. Internals are documented in
 seamless-server-switches = true
 ```
 
+- running more than one proxy on a network: start each with its own `--proxy-index` (0-31),
+  e.g. `java -jar velcro.jar --proxy-index 1`. Two proxies on the same index hand the same
+  entity id to different players
+
 Config phase skipping needs 1.20.2+ clients. Fully packetless switches need 1.20.5-26.3 and
 identical datapacks/plugins across the backends. Older clients behave like stock Velocity.
 

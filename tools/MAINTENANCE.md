@@ -68,6 +68,7 @@ packet" once per player. Treat that as broken, the tracked state is drifting.
 - the fingerprint gate assumes identical backends. Datapack or plugin drift means permanent
   fallback to normal switches, which is on purpose, don't loosen the match
 - entity ids are proxy-owned starting at 1.6b so they can't collide with backend ids counting
-  up from 0. One proxy per network
+  up from 0. Each proxy takes them from its own 16.7m block (`NetworkEntityIds`), picked by
+  `--proxy-index`. Nothing detects two proxies sharing an index, they just collide
 - everything runs on the player's event loop (backend connections bootstrap onto it), which
   is why none of the tracking state is synchronized. Keep it that way
