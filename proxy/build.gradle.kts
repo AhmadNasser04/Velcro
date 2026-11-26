@@ -3,6 +3,7 @@ import io.papermc.fill.model.BuildChannel
 
 plugins {
     application
+    `maven-publish`
     id("velocity-init-manifest")
     alias(libs.plugins.shadow)
     alias(libs.plugins.fill)
@@ -125,4 +126,29 @@ dependencies {
 
     annotationProcessor(libs.auto.service)
     annotationProcessor(libs.log4j.core)
+}
+
+// Velcro: the runnable proxy jar, published once per commit as com.velocitypowered:velcro.
+// The version is the Velocity version plus the commit, e.g. 4.3.2-1e12ff35.
+val velcroVersion = providers.exec { commandLine("git", "rev-parse", "--short=8", "HEAD") }
+    .standardOutput.asText
+    .map { "${projectVersion.removeSuffix("-SNAPSHOT")}-${it.trim()}" }
+
+publishing {
+    repositories {
+        maven("https://repo.striveservices.org/nexus-public") {
+            name = "strive"
+            credentials {
+                username = "Panda"
+                password = System.getenv("PANDA_TOKEN")
+            }
+        }
+    }
+    publications {
+        create<MavenPublication>("velcro") {
+            artifactId = "velcro"
+            version = velcroVersion.get()
+            artifact(tasks.shadowJar) { classifier = "" }
+        }
+    }
 }
