@@ -38,6 +38,10 @@ public final class EntityIdCookie {
     public static OptionalInt retrieve(final ReadablePlayerCookieConnection connection, final UUID playerId, final Logger logger) {
         try {
             final byte[] payload = connection.retrieveCookie(KEY).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (payload == null) {
+                // Not behind Velcro: the request reached the client, which has no such cookie.
+                return OptionalInt.empty();
+            }
             if (payload.length != PAYLOAD_LENGTH) {
                 logger.warn(
                     "Ignoring malformed {} cookie for {} ({} bytes, expected {})",
